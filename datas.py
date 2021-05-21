@@ -255,7 +255,22 @@ def getsameIndex(label):
     # diff = list(set(all) - set(sameP) )#- set([(i, i) for i in range(maxRows)])
     # c,d = zip(*diff)
     return (a,b)#,(c,d)
+def get_Loss(target_loader, model,criterion):
+    losses=0
+    w1, w2, w3, w4 = 1, 100, 1, 100
+    i=0
+    with torch.no_grad():
+        for image, label in tqdm(target_loader):
+            data_input, label = image, label
+            data_input = data_input#.to(device)
+            output = model(data_input)
+            lb = torch.matmul(label, label.T)
 
+            crossLoses = model.marginLoss(output, lb.T, w1=w1, w2=w2, w3=w3, w4=w4)
+            loss = criterion(crossLoses, lb.type_as(crossLoses))
+            losses+=loss.item()
+            i+=1
+    return  losses/1
 def get_thetaMat(data_loader, model,modelOutputOnly=False):
     embeds = []
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -270,11 +285,11 @@ def get_thetaMat(data_loader, model,modelOutputOnly=False):
             embeds.append(image_embeddings)
     image_embeddings = np.concatenate(embeds)
     if modelOutputOnly:return torch.acos(torch.tensor(image_embeddings)) * 57.29
-    print('Nan count is:'+str(np.isnan(image_embeddings).any()))
+    #print('Nan count is:'+str(np.isnan(image_embeddings).any()))
     del embeds
-    print(image_embeddings.shape)
+    #print(image_embeddings.shape)
     _ = gc.collect()
-    print('image embeddings shape', image_embeddings.shape)
+    #print('image embeddings shape', image_embeddings.shape)
     image_embeddings = np.array(image_embeddings)
 
     image_embeddings = normalize(image_embeddings, axis=1)
@@ -291,17 +306,17 @@ def get_thetaMat(data_loader, model,modelOutputOnly=False):
         a = j * CHUNK
         b = (j + 1) * CHUNK
         b = min(b, len(image_embeddings))
-        print('chunk', a, 'to', b)
+        #print('chunk', a, 'to', b)
 
         cts = torch.matmul(image_embeddings, image_embeddings[a:b].T).T
 
         finalMatrix[[i for i in range(a,b)],:]=cts
     finalMatrix=torch.clamp(finalMatrix,min=-1,max=1)
     finalMatrix=torch.acos(finalMatrix) * 57.29
-    print("theta matrix prepared")
-    print('min,max,average theta value are:'+str(torch.min(finalMatrix))+","+str(torch.max(finalMatrix))+","+str(torch.mean(finalMatrix)))
+    #print("theta matrix prepared")
+    #print('min,max,average theta value are:'+str(torch.min(finalMatrix))+","+str(torch.max(finalMatrix))+","+str(torch.mean(finalMatrix)))
     return  finalMatrix
-def thetaGraph(thetaMatrix, data, labelVar, saveLoc,outputCross=True,ret=False):
+def thetaGraph(thetaMatrix, data, labelVar, saveLoc,outputCross=True,ret=False,title=None):
     maxCol = thetaMatrix.shape[1]
     s = data[labelVar].apply(lambda x: np.argmax(x))
     if outputCross:
@@ -312,17 +327,21 @@ def thetaGraph(thetaMatrix, data, labelVar, saveLoc,outputCross=True,ret=False):
         all = [(i, j) for i in range(thetaMatrix.shape[0]) for j in range(thetaMatrix.shape[1])]
 
         #same=[]
-    print("distribution among same and different group starting")
+    #print("distribution among same and different group starting")
     same = list(zip(idx_i, idx_j))
     sameList = thetaMatrix[idx_i, idx_j]
     diff = list(set(all) - set(same))
     idx_i, idx_j = zip(*diff)
     diffList= thetaMatrix[idx_i, idx_j]
-    print("avg_val for same and diff is"+str(torch.mean(sameList))+','+str(torch.mean(diffList)))
-
-    if ret:return torch.mean(sameList),torch.mean(diffList)
+    #print("avg_val for same and diff is"+str(torch.mean(sameList))+','+str(torch.mean(diffList)))
+    elementscount = (thetaMatrix.shape[0] * thetaMatrix.shape[0] - thetaMatrix.shape[0]) / 2
+    diffListMean=(torch.sum(torch.triu(thetaMatrix, diagonal=1)) - torch.mean(sameList) * len(sameList)) / (elementscount - len(sameList))
+    print('mean compare{},{}'.format(torch.mean(diffList),diffListMean))
+    if ret:return torch.mean(sameList),diffListMean
     else:
-        p=plotHist([diffList,sameList],bins= 100,names=['different','same'],title='theta distribution of same and different group' )
+        if title is not None:title=title
+        else: title='theta distribution of same and different group'
+        p=plotHist([diffList,sameList],bins= 100,names=['different','same'],title=title )
         p.savefig(saveLoc)
 
 def get_cv(data_loader, model, data,threshold=0.7):
@@ -428,6 +447,11 @@ def save_model(model, save_path, name, iter_cnt):
     save_name = os.path.join(save_path, name + '_' + str(iter_cnt) + '.pth')
     torch.save(model.state_dict(), save_name)
     return save_name
+def lrToChange(model,):
+    """
+
+    :return:
+    """
 def load_model(model, model_file):
     if torch.cuda.is_available()  :state_dict = torch.load(model_file)
     else:state_dict = torch.load(model_file, map_location=torch.device('cpu'))

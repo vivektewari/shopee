@@ -16,7 +16,7 @@ from torch import autograd
 # target_loader=train_loader
 # target_dataset=train2
 from data.dataset import Dataset
-
+import gc
 import torch
 from torch.utils import data
 import torch.nn.functional as F
@@ -86,7 +86,7 @@ if opt.display:
 # img_paths = [os.path.join(opt.lfw_root, each) for each in identity_list]
 
 print('{} train iters per epoch:'.format(len(target_dataset)))
-if True:
+if False:
     embeds=[]
     maxCat = len(target_dataset['label_group'].unique())
     lb.fit(target_dataset['label_group'])
@@ -112,7 +112,8 @@ if True:
     #label=target_dataset[opt.target].reset_index(drop=True)
 
     vl=vanillaLoder(image_embeddings,target_dataset['label_group'].reset_index(drop=True) )
-    target_loader = DataLoader(vl, batch_size=512, num_workers=8,shuffle=True)
+    target_loader = DataLoader(vl, batch_size=512, num_workers=4,shuffle=True)
+
 if opt.loss == 'focal_loss':
     criterion = FocalLoss(gamma=2)
 elif opt.loss=='thetaLoss':

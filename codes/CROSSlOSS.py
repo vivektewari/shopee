@@ -179,7 +179,7 @@ if __name__ == '__main__':
     while i <opt.max_epoch:
         if i==0:
             lastLoss=1
-            w1, w2, w3, w4 = 1, 10, 1, 100
+            w1, w2, w3, w4 = 1, 100, 1, 100
         elif i==4 and loss.item()>1.0:
                 #visualizer = Visualizer()
                 model.reset_parameters()
@@ -248,25 +248,20 @@ if __name__ == '__main__':
                     time_str = time.asctime(time.localtime(time.time()))
                     # print('{} train epoch {}  {} iters/s loss {} acc {}'.format(time_str, i, speed, loss.item(),
                     #                                                             acc))
-        if opt.display and i % opt.save_interval == 0 and i!=0:
+        if opt.display :
+            visualizer.display_current_results(iters, loss.item(), name='loss')
+            visualizer.display_current_results(iters, model.theta1.item(), name='theta')
+            if i % opt.save_interval == 0 and i != 0:
                         themata = get_thetaMat(target_loader, model)
                         s, d = thetaGraph(themata, target_dataset, 'label_group',
                                           opt.miscDirectory + str(i) + "new3f2.png", ret=True)
                         thetaGraph(themata, target_dataset, 'label_group',
                                    opt.miscDirectory + str(i) + "new3f2.png")
-                        visualizer.display_current_results(iters, loss.item(), name='loss')
-                        visualizer.display_current_results(iters, model.theta1.item() , name='theta')
                         visualizer.display_current_results(iters, s, name='sameMean')
                         visualizer.display_current_results(iters, d, name='diffMean')
+                        save_model(model, opt.checkpoints_path, opt.backbone + 'retrained', i)
                         present = time.time()
-                        print("{} minute passed".format((present-start)/60))
-
-        if i % opt.save_interval == 0 or i == opt.max_epoch-1:
-            #themata = get_thetaMat(target_loader, model)
-            #thetaGraph(themata, target_dataset, 'label_group', opt.miscDirectory + str(i) + "new3f2.png")
-            save_model(model, opt.checkpoints_path, opt.backbone+'retrained', i)
-            # for t in [0.2+i*0.05 for i in range(12)]:
-            #      get_cv(target_loader, model, target_dataset,threshold=t)
+                        print("{} minute passed".format((present - start) / 60))
 
         model.eval()
         i+=1

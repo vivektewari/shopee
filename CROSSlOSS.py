@@ -1,3 +1,5 @@
+import pandas as pd
+
 from req import hold_loader, train_loader
 from sklearn import preprocessing
 
@@ -5,10 +7,10 @@ lb = preprocessing.LabelBinarizer()
 from model import ResNet18mod, ArcFaceLossAdaptiveMargin
 from sklearn.preprocessing import normalize
 
-from datas import get_cv, save_model, load_model, customLosses, getsameIndex, get_thetaMat, thetaGraph, vanillaLoder
+from datas import get_cv, save_model, load_model, customLosses, getsameIndex, get_thetaMat, thetaGraph, vanillaLoder,get_Loss
 from torch.utils.data import DataLoader
 import os
-from config import Config
+from config import Config,OptimizationStartegy
 from tqdm import tqdm as tqdm
 from req import hold2, hold_loader
 
@@ -18,7 +20,7 @@ from torch import autograd
 # target_loader=train_loader
 # target_dataset=train2
 from data.dataset import Dataset
-
+import copy
 import torch
 from torch.utils import data
 import torch.nn.functional as F
@@ -106,7 +108,7 @@ if True:
     # label=target_dataset[opt.target].reset_index(drop=True)
 
     vl = vanillaLoder(image_embeddings, target_dataset['label_group'].reset_index(drop=True))
-    target_loader = DataLoader(vl, batch_size=512, num_workers=8)
+    target_loader = DataLoader(vl, batch_size=512, num_workers=4,shuffle=False)
 if opt.loss == 'focal_loss':
     criterion = FocalLoss(gamma=2)
 elif opt.loss == 'thetaLoss':
@@ -114,10 +116,11 @@ elif opt.loss == 'thetaLoss':
     l = customLosses(margin=15.0, threshold=50.0, same=None)
 
     criterion = l.calcLoss
-
+#6.b,4.c,3.c,5.probably pic is wrongly taken,2.c
 else:
     #criterion = torch.nn.CrossEntropyLoss()
     criterion=torch.nn.BCEWithLogitsLoss(reduction='mean')
+    #criterion=torch.nn.CrossEntropyLoss()
 if __name__ == '__main__':
     if opt.backbone == 'resnet18':
         model = resnet_face18(use_se=opt.use_se)
@@ -126,10 +129,26 @@ if __name__ == '__main__':
     elif opt.backbone == 'resnet50':
         model = resnet50()
     elif opt.backbone == 'arc':
-        model = ArcFaceLossAdaptiveMargin(inputDim=32768, outputDim=4096,margins=0,s=1)
-        # themata = get_thetaMat(target_loader, model)
-        # thetaGraph(themata, target_dataset, 'label_group', opt.miscDirectory + str('randinit3') + "new.png")
-        # save_model(model, opt.checkpoints_path, opt.backbone, 'randomInit')
+        model = ArcFaceLossAdaptiveMargin(inputDim=32768, outputDim=4096,margins=0.7,s=1)
+        if opt.rough:
+            initialWeight = copy.deepcopy(model.weight.data)
+            initialTheta = torch.tensor(model.theta1.item())
+            themata = get_thetaMat(target_loader, model)
+            initial_S,initial_D=thetaGraph(themata, target_dataset, 'label_group', opt.miscDirectory + str('randinit3') + "new.png",ret=True)
+            model.theta1.data = initialTheta.clone().detach()
+            model.weight.data = initialWeight.clone().detach()
+            initial_L=get_Loss(target_loader, model, criterion)
+            #save_model(model, opt.checkpoints_path, opt.backbone, 'randomInit')
+            print("test start initial loss:{}".format(initial_L))
+            # for i in range(2):
+            #
+            #     model.theta1.data = torch.tensor(initialTheta)
+            #     model.weight.data = initialWeight
+            #     initial_L = get_Loss(target_loader, model, criterion)
+            #     print("updated loss:{}".format(initial_L))
+
+
+
 
     else:
         model = ResNet18mod(32768, 8811)  # len(target_dataset.iloc[0].label_group))
@@ -137,7 +156,7 @@ if __name__ == '__main__':
     if opt.preTraining:  # trained weights available
         WGT = opt.load_model_path
         model = load_model(model, WGT)
-        for t in [0.5+i*0.05 for i in range(8)]:
+        for t in [0.2+i*0.05 for i in range(14)]:
               get_cv(target_loader, model, target_dataset,threshold=t)
         #get_cv(target_loader, model, target_dataset,threshold=0.7)
         themata = get_thetaMat(target_loader, model)
@@ -167,6 +186,8 @@ if __name__ == '__main__':
                                     lr=opt.lr, weight_decay=opt.weight_decay)
         optimizer = torch.optim.SGD(opt.customRate(model),
                                      weight_decay=opt.weight_decay)
+        optStrategy=OptimizationStartegy(model,[opt.lr1,opt.lr2])
+        lr1, lr2=opt.lr1,opt.lr2
     else:
         optimizer = torch.optim.Adam([{'params': model.parameters()}, {'params': metric_fc.parameters()}],
                                      lr=opt.lr, weight_decay=opt.weight_decay)
@@ -174,29 +195,85 @@ if __name__ == '__main__':
 
     start = time.time()
     iters = 0
-    i=0
-    lastLoss=0
+
+    #forlr
+    if opt.rough:
+        lastLoss=0
+        index1,index2,index3=-1,-1,0
+        steps = 10
+        lrMain = [0.001 * 10**i for i in range(steps)]
+        lrList=np.array([[0, 0, initial_L, initialTheta, initial_S, initial_D]])
+        temp = pd.DataFrame(
+            {'index1': lrList[:, 0], 'index2': lrList[:, 1], 'loss': lrList[:, 2], 'theta': lrList[:, 3],
+             's': lrList[:, 4], 'd': lrList[:, 5]})
+        temp = temp.astype('float')
+        temp.to_csv(opt.miscDirectory + 'learning.csv', mode='w', header=True)
+
+    i = 0
+    decreaseLoss=True
     while i <opt.max_epoch:
+
         if i==0:
             lastLoss=1
-            w1, w2, w3, w4 = 1, 10, 1, 100
-        elif i==4 and loss.item()>1.0:
-                #visualizer = Visualizer()
-                model.reset_parameters()
-                i=0
-                iters = 0
-                print("paramater refreshing")
-        elif (i>1000  and loss.item()>0.01) :#or (i>5 and percChange<0.20):
-                if s-model.theta1>0:
-                    w1, w2 , w3, w4 =10,100,10,100
-                    print('Weights Changed')
-                    # optimizer.param_groups['lr']=opt.customRate(model)
-                    # print('lr rate refresh')
-
+            w1, w2, w3, w4 = 1, 100, 1, 100
         else :
-            if i%5==0 and i >500:
-                percChange=(loss.item()-lastLoss)/lastLoss
-                lastLoss=loss.item()
+            if i==1:optStrategy.lastLoss=loss.item()
+            if (i-1)%5==0 and i >5:
+                # model.theta1.data=saveTheta
+                # model.weight.data=saveWeight
+                loss1=get_Loss(target_loader, model, criterion)
+                print('loss={}'.format(float(loss1)))
+                lrChange=optStrategy.mainStrategy(loss1,model.theta1.data.clone().detach(),s,d)
+                #print('inside lr')
+                if lrChange is not None:
+                    lr1, lr2=tuple(lrChange)
+                    # optimizer = torch.optim.SGD([{'params': model.theta1, 'lr': lr1}, {'params': mode   l.weight, 'lr': lr2}],
+                    #                         weight_decay=opt.weight_decay)
+                if optStrategy.msg.find('|old')!=-1:
+
+                    if decreaseLoss:
+                        tmp=model.theta1.data.clone().detach()
+                        model.theta1.data=optStrategy.last[0].clone().detach()
+                        themata = get_thetaMat(target_loader, model)
+                        # s, d = thetaGraph(themata, target_dataset, 'label_group',
+                        #                   opt.miscDirectory + str(i) + "new3f2.png", ret=True)
+                        thetaGraph(themata, target_dataset, 'label_group',
+                                   opt.miscDirectory + str(i) + "new3f2.png",title='graph with loss '+str(optStrategy.lastLoss))
+                        model.theta1.data =tmp.clone().detach()
+
+                        save_model(model, opt.checkpoints_path, opt.backbone + 'retrained', i)
+                        decreaseLoss=False
+
+                else:decreaseLoss=True
+
+                print((model.theta1.data%360).clone().detach())
+
+
+        if opt.rough and (i==0 or (i-1)%opt.save_interval==0):#learnign rate evaluator
+
+            if i>opt.save_interval:lrList=np.append(lrList, [[lrMain[index1], lrMain[index2], closs - initial_L, model.theta1.item() - initialTheta, s - initial_S, d - initial_D]], axis=0)
+            if i!=1:
+                index2 += 1
+                if index2%steps==0:
+                    index1+=1
+                    index2 = 0
+                    if i>opt.save_interval:
+                        temp=pd.DataFrame({'index1':lrList[1:,0],'index2':lrList[1:,1],'loss':lrList[1:,2],'theta':lrList[1:,3],'s':lrList[1:,4],'d':lrList[1:,5]})
+                        temp=temp.astype('float')
+                        temp.to_csv(opt.miscDirectory+'learning.csv',mode='a',header=False)
+                        lrList = np.array([[0, 0, initial_L, initialTheta, initial_S, initial_D]])
+                        model.theta1.data = initialTheta.clone().detach()
+                        model.weight.data = initialWeight.clone().detach()
+                        print(index1,index2,torch.tensor(model.theta1.data),torch.mean(model.weight.data),get_Loss(target_loader, model, criterion))
+                        print('lr File updated')
+                optimizer = torch.optim.SGD(opt.customRate(model,lrMain[index1],lrMain[index2]),
+                                        weight_decay=opt.weight_decay)
+                model.theta1.data=initialTheta.clone().detach()
+                model.weight.data=initialWeight.clone().detach()
+
+
+                #print(index1,index2,torch.tensor(model.theta1.data),torch.mean(model.weight.data),get_Loss(target_loader, model, criterion))
+                i=0
 
 
         scheduler.step()
@@ -211,7 +288,8 @@ if __name__ == '__main__':
                 # lb = torch.zeros(lb.shape[0], lb.shape[0])
                 #lb = lb - torch.eye(lb.shape[0])
                 crossLoses=model.marginLoss(output,lb.T,w1=w1, w2=w2 , w3=w3, w4=w4)
-               # crossLoses=model.crossLoss(output,lb.T)
+                #crossLoses=model.arcFaceappl(output,lb.T)
+               # crossLoses=model.crosscLoss(output,lb.T)
                 #print(str(torch.isnan(output).any()), str(torch.isnan(crossLoses).any()))
 
 
@@ -220,13 +298,18 @@ if __name__ == '__main__':
                 # label=torch.zeros(len(label),len(label))
                 # label[[idx],[idy]]=1
 
-
+                #print(get_Loss(target_loader, model, criterion))
                 loss = criterion(crossLoses, lb.type_as(crossLoses))
+                print('epoch:{},loss:{}:'.format(i, loss.item()))
+
+                #print(loss.item(),get_Loss(target_loader, model, criterion))
                 optimizer.zero_grad()
+
                 loss.backward()
                 model.theta1.data = model.theta1.data.clamp(0, 90)
-                model.theta1.register_hook(lambda grad: torch.clamp(grad, -5, 5))
+                model.theta1.register_hook(lambda grad: torch.clamp(grad, -50, 50))
                 optimizer.step()
+
                 #print(torch.max(model.weight.grad),torch.min(model.weight.grad),model.theta1.grad)
                 #print(torch.max(model.weight), torch.min(model.weight))
                 # print(model.weight)
@@ -234,7 +317,7 @@ if __name__ == '__main__':
                 iters += 1
 
 
-                print('epoch:{},loss:{}:'.format(i,loss.item()))
+
 
         if iters % opt.print_freq ==479:
                     output = output.data.cpu().numpy()
@@ -248,27 +331,32 @@ if __name__ == '__main__':
                     time_str = time.asctime(time.localtime(time.time()))
                     # print('{} train epoch {}  {} iters/s loss {} acc {}'.format(time_str, i, speed, loss.item(),
                     #                                                             acc))
-        if opt.display and i % opt.save_interval == 0 and i!=0:
+        if opt.display :
+                visualizer.display_current_results(iters, loss.item(), name='loss')
+                visualizer.display_current_results(iters, model.theta1.item(), name='theta')
+                visualizer.display_current_results(iters, lr1, name='thetaLR')
+                visualizer.display_current_results(iters, lr2, name='weightsLR')
+                visualizer.display_current_results(iters, optStrategy.lastLoss, name='bestLoss')
+
+
+        if i % opt.save_interval == 0 and i != 0:
+                try:
                         themata = get_thetaMat(target_loader, model)
                         s, d = thetaGraph(themata, target_dataset, 'label_group',
                                           opt.miscDirectory + str(i) + "new3f2.png", ret=True)
-                        thetaGraph(themata, target_dataset, 'label_group',
-                                   opt.miscDirectory + str(i) + "new3f2.png")
-                        visualizer.display_current_results(iters, loss.item(), name='loss')
-                        visualizer.display_current_results(iters, model.theta1.item() , name='theta')
+                        # thetaGraph(themata, target_dataset, 'label_group',
+                        #            opt.miscDirectory + str(i) + "new3f2.png")
                         visualizer.display_current_results(iters, s, name='sameMean')
                         visualizer.display_current_results(iters, d, name='diffMean')
+                        #save_model(model, opt.checkpoints_path, opt.backbone + 'retrained', i)
                         present = time.time()
-                        print("{} minute passed".format((present-start)/60))
-
-        if i % opt.save_interval == 0 or i == opt.max_epoch-1:
-            #themata = get_thetaMat(target_loader, model)
-            #thetaGraph(themata, target_dataset, 'label_group', opt.miscDirectory + str(i) + "new3f2.png")
-            save_model(model, opt.checkpoints_path, opt.backbone+'retrained', i)
-            # for t in [0.2+i*0.05 for i in range(12)]:
-            #      get_cv(target_loader, model, target_dataset,threshold=t)
+                        print("{} minute passed".format((present - start) / 60))
+                        closs=loss.item()
+                except:
+                    s,d,closs=-999.0,-999.0,-999.0
 
         model.eval()
+
         i+=1
         # acc = lfw_test(model, img_paths, identity_list, opt.lfw_test_list, opt.test_batch_size)
 

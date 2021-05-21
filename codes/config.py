@@ -42,7 +42,7 @@ class Config(object):
 
     debug_file = '/tmp/debug'  # if os.path.exists(debug_file): enter ipdb
     result_file = 'result.csv'
-    numBreak=10
+    numBreak=80
 
     max_epoch = 100
     lr =1.5 # initial learning rate 1e-1
@@ -50,6 +50,6 @@ class Config(object):
     lr_decay = 0.99  # when val_loss increase, lr = lr*lr_decay 0.95
     weight_decay = 5e-4
     def customRate(self,model):
-        return [{'params': model.theta1,'lr':0.01},{'params': model.weight,'lr': 0.5}]
+        return [{'params': model.theta1,'lr':0.01},{'params': model.weight,'lr': 5}]
     def change(self,epoch,p1=None,p2=None):
         pass

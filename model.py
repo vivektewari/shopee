@@ -56,10 +56,12 @@ class ArcMarginProduct(nn.Module):
 
 
 class ArcFaceLossAdaptiveMargin(nn.modules.Module):
-    def __init__(self, inputDim, outputDim, margins=0.7, s=30.0):
+    def __init__(self, inputDim, outputDim, margins=0.5, s=30.0):
         super().__init__()
         # self.crit = DenseCrossEntropy()
+        # self.weight0 = nn.Parameter(torch.FloatTensor( 4096,inputDim))
         self.weight = nn.Parameter(torch.FloatTensor(outputDim, inputDim))
+
         self.theta1=nn.Parameter(torch.tensor(1,dtype=torch.float64))
         self.reset_parameters()
         self.s = s
@@ -69,11 +71,13 @@ class ArcFaceLossAdaptiveMargin(nn.modules.Module):
         self.sigmoid = nn.Sigmoid()
         self.activation = nn.ReLU()
         self.soft=nn.Softmax(1)
+        self.tan=nn.Tanh()
 
 
     def reset_parameters(self):
         stdv = 1. / math.sqrt(self.weight.size(1))
         self.weight.data.uniform_(-stdv, stdv)
+        # self.weight0.data.uniform_(-stdv, stdv)
         torch.nn.init.uniform_(self.theta1.data, a=10.0, b=90.0)
 
     def crossLoss(self,output,labels):
@@ -115,7 +119,7 @@ class ArcFaceLossAdaptiveMargin(nn.modules.Module):
         #print(str(torch.isnan(output).any()),str(torch.isnan(sine).any()), str(torch.isnan(cosine).any()),str(torch.isnan(phi).any()))
         return output
     def marginLoss(self,output,labels,w1=1,w2=10,w3=1,w4=100):
-
+        vacuum=0
         output=F.normalize(output,dim=1)
         #print(output.shape,torch.sum(torch.trace(torch.matmul(output,output.T))))
         cosine=torch.matmul(output, output.T).T#-torch.eye(labels.shape[0])
@@ -127,23 +131,36 @@ class ArcFaceLossAdaptiveMargin(nn.modules.Module):
         #angle=torch.array(self.theta1,self.theta1+margin)
         #ms=angle*0.0174533
 
-        ll,hl = torch.cos(self.theta1*0.0174533),torch.cos((self.theta1+margin)*0.0174533)
+        ml,ll,hl = torch.cos(self.theta1*0.0174533),torch.cos((self.theta1-margin/2)*0.0174533),torch.cos((self.theta1+margin/2)*0.0174533)
 
-        phi=w1*torch.exp(ll-cosine)+w2*torch.exp(torch.where(hl>cosine,hl-cosine,torch.tensor(-999.0,dtype=torch.float32)))
-        phi2=w3*torch.exp(cosine-hl)+w4*torch.exp(torch.where(cosine>ll,cosine-ll,torch.tensor(-999.0,dtype=torch.float32)))
+        phi=-w1*torch.exp(ll-cosine)-w2*torch.exp(torch.where(ml>(cosine-vacuum),ml-(cosine-vacuum),torch.tensor(-999.0,dtype=torch.float32)))
+        phi2=w3*torch.exp(cosine-hl)+w4*torch.exp(torch.where((cosine+vacuum)>ml,(cosine+vacuum)-ml,torch.tensor(-999.0,dtype=torch.float32)))
         #zer=torch.ones(cosine.shape,cosine.shape)
-        phi=torch.where(cosine<ll,-phi,torch.tensor(999.0,dtype=torch.float32))
-        phi2 = torch.where(cosine>hl, phi2,torch.tensor(-999.0,dtype=torch.float32))
-        # weights1=torch.where(phi<0.0,0.0,1.0)
-        # weights2 = torch.where(phi2 < 0.0,0.0, 1.0)
+        #phi=torch.where(cosine<ll,phi,torch.tensor(999.0,dtype=torch.float32))
+        #phi2 = torch.where(cosine>hl, phi2,torch.tensor(-999.0,dtype=torch.float32))
         output = ((labels) * (phi)+ (1.0 - labels) *phi2)
-        #output = (labels * (-phi) + (1.0 - labels) * phi2 * 0)
-        #print("avg_val for cross func"+str(torch.mean(torch.acos(cosine))* 57.29))
-        #output=self.soft(output)
-
-        #output *= self.s
-        #print(str(torch.isnan(output).any()),str(torch.isnan(sine).any()), str(torch.isnan(cosine).any()),str(torch.isnan(phi).any()))
+        #print(torch.max(phi),torch.max(phi2),torch.min(phi),torch.min(phi2))
         return output
+
+    def arcFaceappl(self,output,labels):
+
+        output=F.normalize(output,dim=1)
+        cosine=torch.matmul(output, output.T).T
+        ms = self.margins
+        cos_m = np.cos(ms)
+        sin_m = np.sin(ms)
+        th = np.cos(math.pi - ms)
+        mm = np.sin(math.pi - ms) * ms
+        cosine = torch.clip(cosine, -0.95, 0.95)
+        sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
+        phi = cosine * cos_m - sine * sin_m
+        phi = torch.where(cosine > th, phi, cosine - mm)
+        output = (labels * phi) + ((1.0 - labels) * cosine)
+        #output=self.tan(output)
+        #output *= 30
+        return output
+
+
     def forward(self, input1, labels):
 
         cosine = F.linear(input1, F.normalize(self.weight))
@@ -164,22 +181,16 @@ class ArcFaceLossAdaptiveMargin(nn.modules.Module):
             # return loss
         return output
     def forward(self, input1):
-        cosine = F.linear(input1, F.normalize(self.weight))#F.normalize(self.weight))
-        # ms = []
-        # ms = self.margins[labels1.cpu().numpy()]
-        # ms = self.margins
-        # cos_m = np.cos(ms)
-        # sin_m = np.sin(ms)
-        # th = np.cos(math.pi - ms)
-        # mm = np.sin(math.pi - ms) * ms
-        #
-        # sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
-        # phi = cosine * cos_m - sine * sin_m
-        # phi = torch.where(cosine > th, phi, cosine - mm)
-        # output = (labels * phi) + ((1.0 - labels) * cosine)
-        # output *= self.s
-            # loss = self.crit(output, labels)
-            # return loss
+
+        cosine = F.linear(input1, F.normalize(self.weight))
+        #cosine=self.sigmoid(cosine)
+        return cosine
+
+    def forwardqq(self, input1):
+        inter=F.linear(input1, F.normalize(self.weight0))
+        inter=self.tan(inter)
+        cosine = F.linear(inter, F.normalize(self.weight))
+        # cosine=self.sigmoid(cosine)
         return cosine
     def forwardq(self, input):
         # --------------------------- cos(theta) & phi(theta) ---------------------------
@@ -188,11 +199,8 @@ class ArcFaceLossAdaptiveMargin(nn.modules.Module):
         cosine = self.activation(cosine)
         return cosine
     def predict(self, input1):
-        #x = self.lr1(input1)
-        # logits = logits.float()
-        cosine = F.linear(input1, F.normalize(self.weight))#F.normalize(self.weight)
-        #x = self.sigmoid(cosine)
-        return cosine#*self.s
+
+        return self.forward(input1)
 
 
 

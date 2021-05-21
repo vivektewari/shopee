@@ -270,11 +270,11 @@ def get_thetaMat(data_loader, model,modelOutputOnly=False):
             embeds.append(image_embeddings)
     image_embeddings = np.concatenate(embeds)
     if modelOutputOnly:return torch.acos(torch.tensor(image_embeddings)) * 57.29
-    print('Nan count is:'+str(np.isnan(image_embeddings).any()))
+    #print('Nan count is:'+str(np.isnan(image_embeddings).any()))
     del embeds
-    print(image_embeddings.shape)
+    #print(image_embeddings.shape)
     _ = gc.collect()
-    print('image embeddings shape', image_embeddings.shape)
+    #print('image embeddings shape', image_embeddings.shape)
     image_embeddings = np.array(image_embeddings)
 
     image_embeddings = normalize(image_embeddings, axis=1)
@@ -291,15 +291,15 @@ def get_thetaMat(data_loader, model,modelOutputOnly=False):
         a = j * CHUNK
         b = (j + 1) * CHUNK
         b = min(b, len(image_embeddings))
-        print('chunk', a, 'to', b)
+        #print('chunk', a, 'to', b)
 
         cts = torch.matmul(image_embeddings, image_embeddings[a:b].T).T
 
         finalMatrix[[i for i in range(a,b)],:]=cts
     finalMatrix=torch.clamp(finalMatrix,min=-1,max=1)
     finalMatrix=torch.acos(finalMatrix) * 57.29
-    print("theta matrix prepared")
-    print('min,max,average theta value are:'+str(torch.min(finalMatrix))+","+str(torch.max(finalMatrix))+","+str(torch.mean(finalMatrix)))
+    #print("theta matrix prepared")
+    #print('min,max,average theta value are:'+str(torch.min(finalMatrix))+","+str(torch.max(finalMatrix))+","+str(torch.mean(finalMatrix)))
     return  finalMatrix
 def thetaGraph(thetaMatrix, data, labelVar, saveLoc,outputCross=True,ret=False):
     maxCol = thetaMatrix.shape[1]
@@ -312,13 +312,13 @@ def thetaGraph(thetaMatrix, data, labelVar, saveLoc,outputCross=True,ret=False):
         all = [(i, j) for i in range(thetaMatrix.shape[0]) for j in range(thetaMatrix.shape[1])]
 
         #same=[]
-    print("distribution among same and different group starting")
+    #print("distribution among same and different group starting")
     same = list(zip(idx_i, idx_j))
     sameList = thetaMatrix[idx_i, idx_j]
     diff = list(set(all) - set(same))
     idx_i, idx_j = zip(*diff)
     diffList= thetaMatrix[idx_i, idx_j]
-    print("avg_val for same and diff is"+str(torch.mean(sameList))+','+str(torch.mean(diffList)))
+    #print("avg_val for same and diff is"+str(torch.mean(sameList))+','+str(torch.mean(diffList)))
 
     if ret:return torch.mean(sameList),torch.mean(diffList)
     else:

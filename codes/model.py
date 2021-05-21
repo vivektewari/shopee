@@ -127,10 +127,10 @@ class ArcFaceLossAdaptiveMargin(nn.modules.Module):
         #angle=torch.array(self.theta1,self.theta1+margin)
         #ms=angle*0.0174533
 
-        ll,hl = torch.cos(self.theta1*0.0174533),torch.cos((self.theta1+margin)*0.0174533)
+        ll,ml,hl = torch.cos(self.theta1*0.0174533),torch.cos((self.theta1+margin/2)*0.0174533),torch.cos((self.theta1+margin)*0.0174533)
 
-        phi=w1*torch.exp(ll-cosine)+w2*torch.exp(torch.where(hl>cosine,hl-cosine,torch.tensor(-999.0,dtype=torch.float32)))
-        phi2=w3*torch.exp(cosine-hl)+w4*torch.exp(torch.where(cosine>ll,cosine-ll,torch.tensor(-999.0,dtype=torch.float32)))
+        phi=w1*torch.exp(ll-cosine)+w2*torch.exp(torch.where(ml>cosine,ml-cosine,torch.tensor(-999.0,dtype=torch.float32)))
+        phi2=w3*torch.exp(cosine-hl)+w4*torch.exp(torch.where(cosine>ml,cosine-ml,torch.tensor(-999.0,dtype=torch.float32)))
         #zer=torch.ones(cosine.shape,cosine.shape)
         phi=torch.where(cosine<ll,-phi,torch.tensor(999.0,dtype=torch.float32))
         phi2 = torch.where(cosine>hl, phi2,torch.tensor(-999.0,dtype=torch.float32))
